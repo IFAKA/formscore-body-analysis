@@ -70,9 +70,16 @@ export function MetricsPanel() {
     <div className="flex flex-col h-full bg-zinc-900 border-l border-zinc-800">
       {/* Header */}
       <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-        <span className="text-xs font-semibold text-zinc-400 tracking-widest uppercase">
-          {mode === "body" ? "Body Metrics" : "Face Metrics"}
-        </span>
+        <div className="flex items-center">
+          <span className="text-xs font-semibold text-zinc-400 tracking-widest uppercase">
+            {mode === "body" ? "Body Metrics" : "Face Metrics"}
+          </span>
+          {capturePhase === "results" && (
+            <span className="ml-2 text-[10px] font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/30 rounded-full px-2 py-0.5 tracking-wider">
+              PHOTO
+            </span>
+          )}
+        </div>
 
         <div className="flex items-center gap-2">
           {/* Copy button */}
