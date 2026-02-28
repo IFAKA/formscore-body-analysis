@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { AnalyzerState, AnalysisMode, MetricResult, CapturePhase, CapturedPhoto } from "@/types/metrics";
+import type { AnalyzerState, AnalysisMode, MetricResult, CapturePhase, CapturedPhoto, QualityStatus } from "@/types/metrics";
 import { BODY_METRIC_IDS, FACE_METRIC_IDS } from "@/types/metrics";
 
 interface MetricMeta { label: string; description: string }
@@ -58,8 +58,10 @@ export const useAnalyzerStore = create<AnalyzerState>((set) => ({
   stableForMs: 0,
   capturedPhotos: [],
   activePhotoIndex: 0,
+  faceQuality: null as QualityStatus,
+  bodyQuality: null as QualityStatus,
 
-  setMode: (mode: AnalysisMode) => set({ mode }),
+  setMode: (mode: AnalysisMode) => set({ mode, stableForMs: 0, isSubjectDetected: false }),
   setBodyMetrics: (bodyMetrics: MetricResult[]) => set({ bodyMetrics }),
   setFaceMetrics: (faceMetrics: MetricResult[]) => set({ faceMetrics }),
   setOverallScore: (overallScore: number | null) => set({ overallScore }),
@@ -77,6 +79,8 @@ export const useAnalyzerStore = create<AnalyzerState>((set) => ({
       capturePhase: "results" as CapturePhase,
     })),
   setActivePhotoIndex: (activePhotoIndex: number) => set({ activePhotoIndex }),
+  setFaceQuality: (faceQuality: QualityStatus) => set({ faceQuality }),
+  setBodyQuality: (bodyQuality: QualityStatus) => set({ bodyQuality }),
   resetCapture: () =>
     set({
       capturePhase: "positioning" as CapturePhase,

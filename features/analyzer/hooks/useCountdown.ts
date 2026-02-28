@@ -12,9 +12,11 @@ import { getFaceLandmarker } from "@/lib/mediapipe/face-landmarker";
 const COUNTDOWN_SECONDS = 3;
 const STABILITY_REQUIRED_MS = 1000;
 
+import type { FaceZoom } from "@/types/metrics";
+
 export function useCountdown(
   videoRef: React.RefObject<HTMLVideoElement | null>,
-  capturePhoto: () => string
+  capturePhoto: () => { dataUrl: string; faceZoom?: FaceZoom }
 ) {
   const capturePhase = useAnalyzerStore((s) => s.capturePhase);
   const stableForMs = useAnalyzerStore((s) => s.stableForMs);
@@ -43,7 +45,7 @@ export function useCountdown(
 
   const doCapture = useCallback(async () => {
     setCapturePhase("capturing");
-    const dataUrl = capturePhoto();
+    const { dataUrl, faceZoom } = capturePhoto();
 
     // Guard against empty capture (camera stopped early)
     if (!dataUrl) {
@@ -60,19 +62,23 @@ export function useCountdown(
       try {
         // Use performance.now() + 1 to avoid "timestamp must be strictly greater" error
         const ts = performance.now() + 1;
+        // Scale x by aspect ratio so x/y distances are in the same units
+        const ar = video.videoWidth / video.videoHeight;
         if (currentMode === "body") {
           const pose = await getPoseLandmarker();
           const result = pose.detectForVideo(video, ts);
           if (result.landmarks.length > 0) {
             detectedLandmarks = result.landmarks[0];
-            metrics = calcBodyMetrics(result.landmarks[0]);
+            const arLandmarks = result.landmarks[0].map(l => ({ ...l, x: l.x * ar }));
+            metrics = calcBodyMetrics(arLandmarks);
           }
         } else {
           const face = await getFaceLandmarker();
           const result = face.detectForVideo(video, ts);
           if (result.faceLandmarks.length > 0) {
             detectedLandmarks = result.faceLandmarks[0];
-            metrics = calcFaceMetrics(result.faceLandmarks[0]);
+            const arLandmarks = result.faceLandmarks[0].map(l => ({ ...l, x: l.x * ar }));
+            metrics = calcFaceMetrics(arLandmarks);
           }
         }
       } catch {
@@ -87,6 +93,7 @@ export function useCountdown(
       overallScore: metrics?.overall ?? null,
       mode: currentMode,
       takenAt: Date.now(),
+      faceZoom,
     };
 
     if (metrics) {
@@ -96,6 +103,7 @@ export function useCountdown(
     }
 
     addCapturedPhoto(photo); // also sets capturePhase to "results"
+    isCountingRef.current = false; // allow next capture after reset
   }, [capturePhoto, videoRef, setCapturePhase, addCapturedPhoto, setBodyMetrics, setFaceMetrics, setOverallScore]);
 
   // Start counting when aligned + stable
@@ -120,13 +128,13 @@ export function useCountdown(
     }
   }, [capturePhase, isSubjectDetected, stableForMs, setCapturePhase, doCapture]);
 
-  // Reset countdown if subject leaves frame during countdown
+  // Reset countdown if subject leaves frame or moves during countdown
   useEffect(() => {
-    if (capturePhase === "countdown" && !isSubjectDetected) {
+    if (capturePhase === "countdown" && (!isSubjectDetected || stableForMs < STABILITY_REQUIRED_MS)) {
       stopCountdown();
       setCapturePhase("positioning");
     }
-  }, [capturePhase, isSubjectDetected, stopCountdown, setCapturePhase]);
+  }, [capturePhase, isSubjectDetected, stableForMs, stopCountdown, setCapturePhase]);
 
   // Reset countdown if mode changes mid-countdown
   useEffect(() => {

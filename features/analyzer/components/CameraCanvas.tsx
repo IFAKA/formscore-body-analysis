@@ -24,6 +24,8 @@ export function CameraCanvas() {
   const error = useAnalyzerStore((s) => s.error);
   const capturedPhotos = useAnalyzerStore((s) => s.capturedPhotos);
   const activePhotoIndex = useAnalyzerStore((s) => s.activePhotoIndex);
+  const faceQuality = useAnalyzerStore((s) => s.faceQuality);
+  const bodyQuality = useAnalyzerStore((s) => s.bodyQuality);
 
   useCountdown(videoRef, capturePhoto);
 
@@ -57,6 +59,8 @@ export function CameraCanvas() {
         ? "Step back until your full body is visible"
         : "Look directly at the camera";
     }
+    if (mode === "face" && faceQuality === "angle") return "Face the camera straight";
+    if (mode === "body" && bodyQuality === "angle") return "Face the camera directly";
     if (stableForMs < 1000) return "Hold still...";
     return null;
   })();
@@ -83,7 +87,6 @@ export function CameraCanvas() {
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
         />
       )}
 

@@ -14,6 +14,12 @@ export interface MetricResult {
 
 export type CapturePhase = "positioning" | "countdown" | "capturing" | "results";
 
+export interface FaceZoom {
+  txNorm: number;   // tx / canvas.width  (normalized offset)
+  tyNorm: number;   // ty / canvas.height
+  scale: number;
+}
+
 export interface CapturedPhoto {
   dataUrl: string;            // base64 JPEG, clean (no landmarks) — for download
   landmarks: NormalizedLandmark[];  // for re-drawing with overlay in results phase
@@ -21,7 +27,10 @@ export interface CapturedPhoto {
   overallScore: number | null;
   mode: AnalysisMode;
   takenAt: number;            // Date.now()
+  faceZoom?: FaceZoom;        // face-mode zoom state at capture time, for landmark remapping
 }
+
+export type QualityStatus = "ok" | "angle" | null;
 
 export interface AnalyzerState {
   mode: AnalysisMode;
@@ -37,6 +46,8 @@ export interface AnalyzerState {
   stableForMs: number;
   capturedPhotos: CapturedPhoto[];
   activePhotoIndex: number;
+  faceQuality: QualityStatus;
+  bodyQuality: QualityStatus;
   setMode: (mode: AnalysisMode) => void;
   setBodyMetrics: (metrics: MetricResult[]) => void;
   setFaceMetrics: (metrics: MetricResult[]) => void;
@@ -51,6 +62,8 @@ export interface AnalyzerState {
   addCapturedPhoto: (photo: CapturedPhoto) => void;
   setActivePhotoIndex: (index: number) => void;
   resetCapture: () => void;
+  setFaceQuality: (quality: QualityStatus) => void;
+  setBodyQuality: (quality: QualityStatus) => void;
 }
 
 export const BODY_METRIC_IDS = [

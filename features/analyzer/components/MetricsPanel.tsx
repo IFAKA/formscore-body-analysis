@@ -8,12 +8,13 @@ import { OverallScore } from "./OverallScore";
 
 function gradeFromScore(score: number): string {
   if (score >= 9) return "S";
-  if (score >= 8) return "A+";
-  if (score >= 7) return "A";
-  if (score >= 6) return "B+";
-  if (score >= 5) return "B";
-  if (score >= 4) return "C";
-  return "D";
+  if (score >= 8.5) return "A+";
+  if (score >= 8) return "A";
+  if (score >= 7.5) return "B+";
+  if (score >= 7) return "B";
+  if (score >= 6) return "C";
+  if (score >= 5) return "D";
+  return "F";
 }
 
 export function MetricsPanel() {

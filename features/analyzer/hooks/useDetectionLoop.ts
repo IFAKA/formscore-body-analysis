@@ -10,20 +10,16 @@ import { drawPose } from "@/lib/draw/draw-pose";
 import { drawFace } from "@/lib/draw/draw-face";
 import { drawHighlight } from "@/lib/draw/draw-highlight";
 import { BODY_HIGHLIGHTS, FACE_HIGHLIGHTS } from "@/lib/draw/highlight-config";
+import { getHeadPose } from "@/lib/metrics/face/head-pose";
+import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-function computeCentroid(landmarks: { x: number; y: number }[]): { x: number; y: number } {
-  const n = landmarks.length;
-  if (n === 0) return { x: 0.5, y: 0.5 };
-  const sx = landmarks.reduce((a, l) => a + l.x, 0);
-  const sy = landmarks.reduce((a, l) => a + l.y, 0);
-  return { x: sx / n, y: sy / n };
-}
 
-const STABILITY_THRESHOLD = 0.05;   // 5% of frame width
+const STABILITY_THRESHOLD = 0.02;      // per-frame delta
+const STABILITY_BASE_THRESHOLD = 0.04; // drift from where you were when stability started
 const UI_UPDATE_INTERVAL_MS = 100; // 10 Hz UI updates
 
 export function useDetectionLoop(
@@ -35,6 +31,10 @@ export function useDetectionLoop(
   const faceZoomRef = useRef({ cx: 0.5, cy: 0.5, scale: 1.0 });
   const stableStartRef = useRef<number | null>(null);
   const lastCentroidRef = useRef<{ x: number; y: number } | null>(null);
+  const stableBaseRef = useRef<{ x: number; y: number } | null>(null);
+  // EMA buffers for face landmark smoothing (alpha = 0.25, ~478 landmarks with iris refinement)
+  const emaXRef = useRef<Float32Array | null>(null);
+  const emaYRef = useRef<Float32Array | null>(null);
 
   const mode = useAnalyzerStore((s) => s.mode);
   const setBodyMetrics = useAnalyzerStore((s) => s.setBodyMetrics);
@@ -47,13 +47,22 @@ export function useDetectionLoop(
   const hoveredMetricId = useAnalyzerStore((s) => s.hoveredMetricId);
   const capturePhase = useAnalyzerStore((s) => s.capturePhase);
   const setStableForMs = useAnalyzerStore((s) => s.setStableForMs);
+  const setFaceQuality = useAnalyzerStore((s) => s.setFaceQuality);
+  const setBodyQuality = useAnalyzerStore((s) => s.setBodyQuality);
 
   const modeRef = useRef(mode);
   useEffect(() => {
     if (mode === "face") {
       faceZoomRef.current = { cx: 0.5, cy: 0.5, scale: 1.0 };
+      // Reset EMA buffers so a mode switch starts fresh
+      emaXRef.current = null;
+      emaYRef.current = null;
     }
     modeRef.current = mode;
+    // Reset stability refs so the new mode starts fresh
+    stableStartRef.current = null;
+    lastCentroidRef.current = null;
+    stableBaseRef.current = null;
   }, [mode]);
 
   const hoveredMetricIdRef = useRef(hoveredMetricId);
@@ -70,17 +79,32 @@ export function useDetectionLoop(
     setIsDetecting(false);
   }, [setIsDetecting]);
 
-  const capturePhoto = useCallback((): string => {
+  const capturePhoto = useCallback((): { dataUrl: string; faceZoom?: import("@/types/metrics").FaceZoom } => {
     const video = videoRef.current;
-    if (!video) return "";
+    if (!video) return { dataUrl: "" };
     const offscreen = document.createElement("canvas");
     offscreen.width = video.videoWidth;
     offscreen.height = video.videoHeight;
     const ctx = offscreen.getContext("2d");
-    if (!ctx) return "";
-    // Draw raw video (no landmarks — CSS mirror handles display)
+    if (!ctx) return { dataUrl: "" };
+
+    if (modeRef.current === "face") {
+      const { cx, cy, scale } = faceZoomRef.current;
+      const cw = offscreen.width, ch = offscreen.height;
+      const rawTx = cw / 2 - cx * cw * scale;
+      const rawTy = ch / 2 - cy * ch * scale;
+      const tx = Math.min(0, Math.max(cw * (1 - scale), rawTx));
+      const ty = Math.min(0, Math.max(ch * (1 - scale), rawTy));
+      ctx.setTransform(scale, 0, 0, scale, tx, ty);
+      ctx.drawImage(video, 0, 0, cw, ch);
+      return {
+        dataUrl: offscreen.toDataURL("image/jpeg", 0.92),
+        faceZoom: { txNorm: tx / cw, tyNorm: ty / ch, scale },
+      };
+    }
+
     ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
-    return offscreen.toDataURL("image/jpeg", 0.92);
+    return { dataUrl: offscreen.toDataURL("image/jpeg", 0.92) };
   }, [videoRef]);
 
   const start = useCallback(async () => {
@@ -139,32 +163,43 @@ export function useDetectionLoop(
               : false;
             setIsSubjectDetected(fullyVisible);
 
-            // Stability tracking (body)
+            // Stability tracking (body) — use nose only, compare vs base position
             if (fullyVisible && landmarks) {
               const phase = capturePhaseRef.current;
               if (phase === "positioning" || phase === "countdown") {
-                const keyLandmarks = [0, 11, 12, 23, 24].map(i => landmarks[i]);
-                const centroid = computeCentroid(keyLandmarks);
+                const pos = { x: landmarks[0].x, y: landmarks[0].y };
                 const last = lastCentroidRef.current;
-                const isStable = last
-                  ? Math.abs(centroid.x - last.x) < STABILITY_THRESHOLD &&
-                    Math.abs(centroid.y - last.y) < STABILITY_THRESHOLD
-                  : true;
+                const base = stableBaseRef.current;
+                const movedFromLast = last
+                  ? Math.abs(pos.x - last.x) > STABILITY_THRESHOLD ||
+                    Math.abs(pos.y - last.y) > STABILITY_THRESHOLD
+                  : false;
+                const driftedFromBase = base
+                  ? Math.abs(pos.x - base.x) > STABILITY_BASE_THRESHOLD ||
+                    Math.abs(pos.y - base.y) > STABILITY_BASE_THRESHOLD
+                  : false;
+                const isStable = !movedFromLast && !driftedFromBase;
 
-                lastCentroidRef.current = centroid;
+                lastCentroidRef.current = pos;
 
                 if (isStable) {
-                  if (stableStartRef.current === null) stableStartRef.current = timestamp;
+                  if (stableStartRef.current === null) {
+                    stableStartRef.current = timestamp;
+                    stableBaseRef.current = pos;
+                  }
                   setStableForMs(timestamp - stableStartRef.current);
                 } else {
                   stableStartRef.current = null;
+                  stableBaseRef.current = null;
                   setStableForMs(0);
                 }
               }
             } else if (!fullyVisible) {
               stableStartRef.current = null;
               lastCentroidRef.current = null;
+              stableBaseRef.current = null;
               setStableForMs(0);
+              setBodyQuality(null);
             }
 
             if (landmarks) {
@@ -175,9 +210,23 @@ export function useDetectionLoop(
             }
 
             if (fullyVisible && landmarks && shouldUpdateUI) {
-              const { metrics, overall } = calcBodyMetrics(landmarks);
-              setBodyMetrics(metrics);
-              setOverallScore(overall);
+              // Check that person is facing the camera (not sideways)
+              const shoulderWidth = Math.abs(landmarks[12].x - landmarks[11].x);
+              const ankleY = (landmarks[27].y + landmarks[28].y) / 2;
+              const bodyHeight = Math.abs(ankleY - landmarks[0].y);
+              const isFacingCamera = bodyHeight > 0.01 && (shoulderWidth / bodyHeight) > 0.18;
+
+              if (isFacingCamera) {
+                setBodyQuality("ok");
+                // Scale x by aspect ratio so x/y distances are in the same units
+                const ar = canvas.width / canvas.height;
+                const arLandmarks = landmarks.map(l => ({ ...l, x: l.x * ar }));
+                const { metrics, overall } = calcBodyMetrics(arLandmarks);
+                setBodyMetrics(metrics);
+                setOverallScore(overall);
+              } else {
+                setBodyQuality("angle");
+              }
               lastUIUpdateRef.current = timestamp;
             }
           } else {
@@ -188,31 +237,42 @@ export function useDetectionLoop(
             const detected = result.faceLandmarks.length > 0;
             setIsSubjectDetected(detected);
 
-            // Stability tracking (face)
+            // Stability tracking (face) — use nose tip only, compare vs base position
             if (detected) {
               const phase = capturePhaseRef.current;
               if (phase === "positioning" || phase === "countdown") {
                 const lms = result.faceLandmarks[0];
-                const centroid = computeCentroid(lms);
+                const pos = { x: lms[1].x, y: lms[1].y }; // nose tip
                 const last = lastCentroidRef.current;
-                const isStable = last
-                  ? Math.abs(centroid.x - last.x) < STABILITY_THRESHOLD &&
-                    Math.abs(centroid.y - last.y) < STABILITY_THRESHOLD
-                  : true;
+                const base = stableBaseRef.current;
+                const movedFromLast = last
+                  ? Math.abs(pos.x - last.x) > STABILITY_THRESHOLD ||
+                    Math.abs(pos.y - last.y) > STABILITY_THRESHOLD
+                  : false;
+                const driftedFromBase = base
+                  ? Math.abs(pos.x - base.x) > STABILITY_BASE_THRESHOLD ||
+                    Math.abs(pos.y - base.y) > STABILITY_BASE_THRESHOLD
+                  : false;
+                const isStable = !movedFromLast && !driftedFromBase;
 
-                lastCentroidRef.current = centroid;
+                lastCentroidRef.current = pos;
 
                 if (isStable) {
-                  if (stableStartRef.current === null) stableStartRef.current = timestamp;
+                  if (stableStartRef.current === null) {
+                    stableStartRef.current = timestamp;
+                    stableBaseRef.current = pos;
+                  }
                   setStableForMs(timestamp - stableStartRef.current);
                 } else {
                   stableStartRef.current = null;
+                  stableBaseRef.current = null;
                   setStableForMs(0);
                 }
               }
             } else {
               stableStartRef.current = null;
               lastCentroidRef.current = null;
+              stableBaseRef.current = null;
               setStableForMs(0);
             }
 
@@ -250,19 +310,60 @@ export function useDetectionLoop(
             ctx.drawImage(video, 0, 0, cw, ch);
 
             if (detected) {
-              const landmarks = result.faceLandmarks[0];
-              drawFace(ctx, landmarks, cw, ch);
+              const rawLandmarks = result.faceLandmarks[0];
+
+              // Apply EMA smoothing (alpha=0.25) to landmark positions to reduce jitter
+              const n = rawLandmarks.length;
+              if (!emaXRef.current || emaXRef.current.length !== n) {
+                emaXRef.current = new Float32Array(rawLandmarks.map(l => l.x));
+                emaYRef.current = new Float32Array(rawLandmarks.map(l => l.y));
+              } else {
+                const alpha = 0.25;
+                for (let i = 0; i < n; i++) {
+                  emaXRef.current[i] = alpha * rawLandmarks[i].x + (1 - alpha) * emaXRef.current[i];
+                  emaYRef.current![i] = alpha * rawLandmarks[i].y + (1 - alpha) * emaYRef.current![i];
+                }
+              }
+              const smoothedLandmarks: NormalizedLandmark[] = rawLandmarks.map((l, i) => ({
+                ...l,
+                x: emaXRef.current![i],
+                y: emaYRef.current![i],
+              }));
+
+              drawFace(ctx, smoothedLandmarks, cw, ch);
 
               if (hoveredId && FACE_HIGHLIGHTS[hoveredId]) {
-                drawHighlight(ctx, landmarks, FACE_HIGHLIGHTS[hoveredId], cw, ch);
+                drawHighlight(ctx, smoothedLandmarks, FACE_HIGHLIGHTS[hoveredId], cw, ch);
               }
 
               if (shouldUpdateUI) {
-                const { metrics, overall } = calcFaceMetrics(landmarks);
-                setFaceMetrics(metrics);
-                setOverallScore(overall);
+                // Head pose quality gate — skip metrics when face is too angled
+                const matrixData = result.facialTransformationMatrixes?.[0]?.data;
+                let poseOk = true;
+                if (matrixData) {
+                  const { yaw, pitch } = getHeadPose(Array.from(matrixData));
+                  if (Math.abs(yaw) > 18 || Math.abs(pitch) > 18) {
+                    poseOk = false;
+                  }
+                }
+
+                if (poseOk) {
+                  setFaceQuality("ok");
+                  // Scale x by aspect ratio so x/y distances are in the same units
+                  const ar = canvas.width / canvas.height;
+                  const arSmoothed = smoothedLandmarks.map(l => ({ ...l, x: l.x * ar }));
+                  const { metrics, overall } = calcFaceMetrics(arSmoothed);
+                  setFaceMetrics(metrics);
+                  setOverallScore(overall);
+                } else {
+                  setFaceQuality("angle");
+                }
                 lastUIUpdateRef.current = timestamp;
               }
+            } else {
+              setFaceQuality(null);
+              emaXRef.current = null;
+              emaYRef.current = null;
             }
 
             ctx.restore();
@@ -280,7 +381,7 @@ export function useDetectionLoop(
       setError(`Detection error: ${msg}`);
       setIsReady(false);
     }
-  }, [videoRef, canvasRef, setBodyMetrics, setFaceMetrics, setOverallScore, setIsReady, setIsDetecting, setIsSubjectDetected, setError, setStableForMs]);
+  }, [videoRef, canvasRef, setBodyMetrics, setFaceMetrics, setOverallScore, setIsReady, setIsDetecting, setIsSubjectDetected, setError, setStableForMs, setFaceQuality, setBodyQuality]);
 
   useEffect(() => {
     return () => stop();

@@ -28,44 +28,22 @@ export function ResultsCanvas({ photo }: Props) {
       const iw = img.naturalWidth;
       const ih = img.naturalHeight;
 
-      // For face mode, crop/zoom to the face bounding box
-      let sx = 0, sy = 0, sw = iw, sh = ih;
+      canvas.width = iw;
+      canvas.height = ih;
+
+      // Draw photo as-is — it was captured with the same zoom/framing as the live view
+      ctx.drawImage(img, 0, 0, iw, ih);
+
+      // Remap landmarks to match the zoom transform stored at capture time
       let lmsForDraw = photo.landmarks;
-
-      if (photo.mode === "face" && photo.landmarks.length > 0) {
-        const lms = photo.landmarks;
-        const xs = lms.map((l) => l.x);
-        const ys = lms.map((l) => l.y);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
-
-        // Center + square crop with 40% padding
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        const half = Math.max((maxX - minX) / 2, (maxY - minY) / 2) * 1.4;
-
-        sx = Math.max(0, (cx - half) * iw);
-        sy = Math.max(0, (cy - half) * ih);
-        const ex = Math.min(1, cx + half) * iw;
-        const ey = Math.min(1, cy + half) * ih;
-        sw = ex - sx;
-        sh = ey - sy;
-
-        // Remap landmarks into crop-space so overlays align
-        lmsForDraw = lms.map((lm) => ({
+      if (photo.mode === "face" && photo.faceZoom && photo.landmarks.length > 0) {
+        const { txNorm, tyNorm, scale } = photo.faceZoom;
+        lmsForDraw = photo.landmarks.map((lm) => ({
           ...lm,
-          x: (lm.x * iw - sx) / sw,
-          y: (lm.y * ih - sy) / sh,
+          x: txNorm + lm.x * scale,
+          y: tyNorm + lm.y * scale,
         }));
       }
-
-      canvas.width = sw;
-      canvas.height = sh;
-
-      // Draw cropped photo
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
 
       // Overlay landmarks
       if (photo.landmarks.length > 0) {
@@ -89,7 +67,6 @@ export function ResultsCanvas({ photo }: Props) {
     <canvas
       ref={canvasRef}
       className="absolute inset-0 w-full h-full object-cover"
-      style={{ transform: "scaleX(-1)" }}
     />
   );
 }
