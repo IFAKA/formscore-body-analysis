@@ -29,6 +29,7 @@ export function CameraCanvas() {
 
   const isInResults = capturePhase === "results";
 
+  // Restart camera whenever we leave results phase (mount or after reset)
   useEffect(() => {
     if (isInResults) return;
     let mounted = true;
@@ -45,14 +46,6 @@ export function CameraCanvas() {
       stop();
       stopCamera();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Stop detection loop once results are in
-  useEffect(() => {
-    if (isInResults) {
-      stop();
-      stopCamera();
-    }
   }, [isInResults]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activePhoto = isInResults ? capturedPhotos[activePhotoIndex] : null;
