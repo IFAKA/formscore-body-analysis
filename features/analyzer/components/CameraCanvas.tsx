@@ -8,6 +8,7 @@ import { useCountdown } from "../hooks/useCountdown";
 import { useAnalyzerStore } from "@/store/analyzer.store";
 import { CountdownOverlay } from "./CountdownOverlay";
 import { CaptureFlash } from "./CaptureFlash";
+import { PhotoViewer } from "./PhotoViewer";
 
 export function CameraCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -199,6 +200,9 @@ export function CameraCanvas() {
 
       {/* Capture flash */}
       <CaptureFlash />
+
+      {/* Photo viewer toolbar + gallery */}
+      <PhotoViewer />
 
       {/* Phase indicator badge */}
       <AnimatePresence>
