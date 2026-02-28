@@ -9,6 +9,7 @@ import { useAnalyzerStore } from "@/store/analyzer.store";
 import { CountdownOverlay } from "./CountdownOverlay";
 import { CaptureFlash } from "./CaptureFlash";
 import { PhotoViewer } from "./PhotoViewer";
+import { ResultsCanvas } from "./ResultsCanvas";
 
 export function CameraCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -82,14 +83,9 @@ export function CameraCanvas() {
         autoPlay
       />
 
-      {/* Results phase: show captured photo */}
+      {/* Results phase: show captured photo with landmarks overlay for hover interaction */}
       {isInResults && activePhoto ? (
-        <img
-          src={activePhoto.dataUrl}
-          alt="Captured photo"
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
-        />
+        <ResultsCanvas photo={activePhoto} />
       ) : (
         <canvas
           ref={canvasRef}

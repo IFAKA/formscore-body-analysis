@@ -1,3 +1,5 @@
+import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
+
 export type AnalysisMode = "body" | "face";
 
 export interface MetricResult {
@@ -13,11 +15,12 @@ export interface MetricResult {
 export type CapturePhase = "positioning" | "countdown" | "capturing" | "results";
 
 export interface CapturedPhoto {
-  dataUrl: string;      // base64 JPEG, no landmarks
+  dataUrl: string;            // base64 JPEG, clean (no landmarks) — for download
+  landmarks: NormalizedLandmark[];  // for re-drawing with overlay in results phase
   metrics: MetricResult[];
   overallScore: number | null;
   mode: AnalysisMode;
-  takenAt: number;      // Date.now()
+  takenAt: number;            // Date.now()
 }
 
 export interface AnalyzerState {

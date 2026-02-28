@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAnalyzerStore } from "@/store/analyzer.store";
 import type { CapturedPhoto } from "@/types/metrics";
+import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import { calcBodyMetrics } from "./useBodyMetrics";
 import { calcFaceMetrics } from "./useFaceMetrics";
 import { getPoseLandmarker } from "@/lib/mediapipe/pose-landmarker";
@@ -52,6 +53,7 @@ export function useCountdown(
 
     const video = videoRef.current;
     let metrics: ReturnType<typeof calcBodyMetrics> | null = null;
+    let detectedLandmarks: NormalizedLandmark[] = [];
     const currentMode = modeRef.current;
 
     if (video) {
@@ -62,12 +64,14 @@ export function useCountdown(
           const pose = await getPoseLandmarker();
           const result = pose.detectForVideo(video, ts);
           if (result.landmarks.length > 0) {
+            detectedLandmarks = result.landmarks[0];
             metrics = calcBodyMetrics(result.landmarks[0]);
           }
         } else {
           const face = await getFaceLandmarker();
           const result = face.detectForVideo(video, ts);
           if (result.faceLandmarks.length > 0) {
+            detectedLandmarks = result.faceLandmarks[0];
             metrics = calcFaceMetrics(result.faceLandmarks[0]);
           }
         }
@@ -78,6 +82,7 @@ export function useCountdown(
 
     const photo: CapturedPhoto = {
       dataUrl,
+      landmarks: detectedLandmarks,
       metrics: metrics?.metrics ?? [],
       overallScore: metrics?.overall ?? null,
       mode: currentMode,
